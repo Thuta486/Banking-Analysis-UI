@@ -47,11 +47,24 @@ cv_results = artifacts["cv_results"]
 findings = artifacts["findings"]
 duration_effect = artifacts["duration_effect"]
 top_rules = artifacts["top_rules"]
+k_range = artifacts.get("k_range")
+inertias = artifacts.get("inertias")
+silhouette_scores = artifacts.get("silhouette_scores")
+suggested_k = artifacts.get("suggested_k")
+
+with st.sidebar:
+    st.header("IS-212 Project")
+    st.caption("Thuta Kyaw Lynn - YKPT-22387")
+    st.markdown("**Customer Subscription Prediction**\n\nBank Marketing dataset - descriptive & predictive mining")
 
 st.title("Customer Subscription Prediction - Banking Marketing Campaigns")
 st.caption(
     "IS-212 Data and Knowledge Mining project. Model, clusters, and charts below are "
     "the exact artifacts trained in the accompanying notebook - nothing here is retrained."
+)
+st.info(
+    "**Project Goal:** Help banks identify customers who are more likely to subscribe "
+    "to a term deposit, allowing them to prioritize calls and reduce wasted contact effort."
 )
 
 tabs = st.tabs([
@@ -96,6 +109,19 @@ with tabs[1]:
     st.subheader("Categorical column statistics")
     st.dataframe(df[categorical_features].describe().T, use_container_width=True)
 
+    st.divider()
+    st.subheader("Data Visualization")
+    v1, v2 = st.columns(2)
+    v1.plotly_chart(px.histogram(df, x="job", title="Job Distribution").update_xaxes(categoryorder="total descending"),
+                     use_container_width=True)
+    v2.plotly_chart(px.histogram(df, x="education", title="Education Level").update_xaxes(categoryorder="total descending"),
+                     use_container_width=True)
+    v3, v4 = st.columns(2)
+    v3.plotly_chart(px.histogram(df, x="age", title="Age Distribution", nbins=30), use_container_width=True)
+    corr = df[numeric_features].corr()
+    v4.plotly_chart(px.imshow(corr, text_auto=".2f", color_continuous_scale="RdBu_r",
+                               title="Correlation Heatmap"), use_container_width=True)
+
 # ----------------------------------------------------------------------
 # TAB 3 - DESCRIPTIVE MINING
 # ----------------------------------------------------------------------
@@ -113,6 +139,22 @@ with tabs[2]:
 
     st.divider()
     st.subheader("Customer Segmentation (K-Means)")
+
+    if k_range and inertias and silhouette_scores:
+        e1, e2 = st.columns(2)
+        fig = px.line(x=k_range, y=inertias, markers=True,
+                       labels={"x": "k", "y": "Inertia"}, title="Elbow Method")
+        e1.plotly_chart(fig, use_container_width=True)
+        fig = px.line(x=k_range, y=silhouette_scores, markers=True,
+                       labels={"x": "k", "y": "Silhouette score"}, title="Silhouette Score by k")
+        e2.plotly_chart(fig, use_container_width=True)
+        st.caption(
+            f"k={suggested_k} chosen: highest silhouette score ({max(silhouette_scores):.3f}) "
+            "and the smallest k within 0.01 of the best score, keeping clusters interpretable. "
+            "`job` (12 categories) was grouped into 4 broader categories before clustering to avoid "
+            "sparse one-hot columns destabilizing the distance metric."
+        )
+
     st.dataframe(cluster_profile, use_container_width=True)
 
     cluster_rate = df.groupby("cluster")["y"].mean().mul(100)
@@ -139,6 +181,11 @@ with tabs[2]:
 # ----------------------------------------------------------------------
 with tabs[3]:
     st.subheader("Model Comparison")
+    st.info(
+    "**Data Leakage Check:** `duration` is excluded from the realistic model because "
+    "call duration is only known after the call. Experiment B includes it for comparison "
+    "to show how data leakage can artificially improve model performance."
+)
     colA, colB = st.columns(2)
     colA.markdown("**Experiment A - without `duration`**")
     colA.dataframe(results_a, use_container_width=True)
@@ -153,6 +200,8 @@ with tabs[3]:
 
     st.subheader("Cross-Validation (5-fold, Experiment A)")
     st.dataframe(cv_results, use_container_width=True)
+
+    st.caption(f"**Best model: {best_model_name}** - selected by highest ROC-AUC on Experiment A (realistic, no duration).")
 
     st.subheader("Findings")
     st.dataframe(findings, use_container_width=True, hide_index=True)
