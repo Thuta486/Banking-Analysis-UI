@@ -46,7 +46,12 @@ results_b = artifacts["results_b"]
 cv_results = artifacts["cv_results"]
 findings = artifacts["findings"]
 duration_effect = artifacts["duration_effect"]
-top_rules = artifacts["top_rules"]
+# rules_to_no / rules_to_yes replace the old single "top_rules" table - falls back
+# to top_rules if the notebook bundle hasn't been re-exported yet.
+rules_to_no = artifacts.get("rules_to_no", artifacts.get("top_rules"))
+rules_to_yes = artifacts.get("rules_to_yes")
+cluster_subscription = artifacts.get("cluster_subscription")
+cluster_nature = artifacts.get("cluster_nature", {})
 k_range = artifacts.get("k_range")
 inertias = artifacts.get("inertias")
 silhouette_scores = artifacts.get("silhouette_scores")
@@ -91,6 +96,9 @@ with tabs[0]:
     st.subheader("Numeric column statistics")
     st.dataframe(df[numeric_features].describe().T, use_container_width=True)
 
+    st.subheader("Categorical column statistics")
+    st.dataframe(df[categorical_features].describe().T, use_container_width=True)
+
 # ----------------------------------------------------------------------
 # TAB 2 - DATA PREPARATION
 # ----------------------------------------------------------------------
@@ -106,8 +114,18 @@ with tabs[1]:
         "previous campaign - not random missingness."
     )
 
-    st.subheader("Categorical column statistics")
-    st.dataframe(df[categorical_features].describe().T, use_container_width=True)
+    st.divider()
+    st.subheader("Customer Profiling")
+    
+    profile_cols = ["job", "education", "marital", "housing", "loan",
+                     "contact", "poutcome", "age_group", "campaign_group"]
+    profile_cols = [c for c in profile_cols if c in df.columns]
+    chosen_col = st.selectbox("Group subscription rate by:", profile_cols)
+
+    rate = df.groupby(chosen_col, observed=True)["y"].mean().mul(100).sort_values(ascending=False)
+    fig = px.bar(rate, labels={"value": "Subscription rate (%)", "index": chosen_col},
+                 title=f"Subscription Rate by {chosen_col}")
+    st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
     st.subheader("Data Visualization")
@@ -126,19 +144,12 @@ with tabs[1]:
 # TAB 3 - DESCRIPTIVE MINING
 # ----------------------------------------------------------------------
 with tabs[2]:
-    st.subheader("Customer Profiling")
-    profile_cols = ["job", "education", "marital", "housing", "loan",
-                     "contact", "poutcome", "age_group", "campaign_group"]
-    profile_cols = [c for c in profile_cols if c in df.columns]
-    chosen_col = st.selectbox("Group subscription rate by:", profile_cols)
-
-    rate = df.groupby(chosen_col, observed=True)["y"].mean().mul(100).sort_values(ascending=False)
-    fig = px.bar(rate, labels={"value": "Subscription rate (%)", "index": chosen_col},
-                 title=f"Subscription Rate by {chosen_col}")
-    st.plotly_chart(fig, use_container_width=True)
-
-    st.divider()
     st.subheader("Customer Segmentation (K-Means)")
+    st.caption(
+        "Segmentation and association rules below are the actual descriptive "
+        "mining techniques used in this project - both discover structure directly from the data "
+        "instead of grouping by a single known column."
+    )
 
     if k_range and inertias and silhouette_scores:
         e1, e2 = st.columns(2)
@@ -157,7 +168,10 @@ with tabs[2]:
 
     st.dataframe(cluster_profile, use_container_width=True)
 
-    cluster_rate = df.groupby("cluster")["y"].mean().mul(100)
+    cluster_rate = (
+        cluster_subscription if cluster_subscription is not None
+        else df.groupby("cluster")["y"].mean().mul(100)
+    )
     fig = px.bar(cluster_rate, labels={"value": "Subscription rate (%)", "index": "Cluster"},
                  title="Subscription Rate by Cluster")
     st.plotly_chart(fig, use_container_width=True)
@@ -169,12 +183,65 @@ with tabs[2]:
     )
     st.plotly_chart(fig, use_container_width=True)
 
+    if cluster_nature:
+        st.markdown("**What each cluster means**")
+        st.caption(
+            "Each cluster has a distinct nature, not just a different subscription number - "
+            "based on prior contact history and the macroeconomic climate at the time of contact."
+        )
+        for cluster_id in sorted(cluster_nature.keys()):
+            info = cluster_nature[cluster_id]
+            rate_txt = ""
+            if cluster_rate is not None and cluster_id in cluster_rate.index:
+                rate_txt = f" ({cluster_rate.loc[cluster_id]:.2f}% subscription)"
+            with st.expander(f"Cluster {cluster_id} - {info['label']}{rate_txt}"):
+                st.write(info["desc"])
+
     st.divider()
-    st.subheader("Association Rules (Top Patterns)")
-    rules_display = top_rules.copy()
-    rules_display["antecedents"] = rules_display["antecedents"].apply(lambda s: ", ".join(sorted(s)))
-    rules_display["consequents"] = rules_display["consequents"].apply(lambda s: ", ".join(sorted(s)))
-    st.dataframe(rules_display, use_container_width=True)
+    st.subheader("Association Rules")
+    st.caption(
+        "Goal: find out which combinations of customer/campaign attributes co-occur with a particular "
+        "subscription outcome - which combinations are strongly linked to customers who do **not** "
+        "subscribe (y=no), and which are linked to customers who **do** subscribe (y=yes). This is more "
+        "directly useful for a marketing team than the raw statistics in Data Preparation alone, since "
+        "it points to concrete profiles worth targeting or deprioritizing."
+    )
+
+    def _format_rules(rules_df, top_n):
+        display = rules_df.sort_values("lift", ascending=False).head(top_n).copy()
+        display["antecedents"] = display["antecedents"].apply(lambda s: ", ".join(sorted(s)))
+        display["consequents"] = display["consequents"].apply(lambda s: ", ".join(sorted(s)))
+        return display[["antecedents", "consequents", "support", "confidence", "lift"]]
+
+    top_n_rules = st.slider("Number of top rules to show (ranked by lift)", 5, 25, 10)
+
+    st.markdown("**Rules pointing to y=no (not subscribing)**")
+    st.caption(f"Showing the top {top_n_rules} of {len(rules_to_no):,} rules found, ranked by lift.")
+    st.dataframe(_format_rules(rules_to_no, top_n_rules), use_container_width=True)
+    st.caption(
+        "The strongest patterns all point to the same group: technicians with a professional-course "
+        "education, no personal loan, and no prior campaign contact are consistently linked to not "
+        "subscribing (lift around 4.05-4.08) - about four times more common among non-subscribers than "
+        "by chance. A useful negative pattern for deprioritizing unlikely-to-convert profiles."
+    )
+
+    if rules_to_yes is not None and len(rules_to_yes) > 0:
+        st.markdown("**Rules pointing to y=yes (subscribing)**")
+        st.caption(f"Showing the top {min(top_n_rules, len(rules_to_yes))} of {len(rules_to_yes):,} rules found, ranked by lift.")
+        st.dataframe(_format_rules(rules_to_yes, top_n_rules), use_container_width=True)
+        st.caption(
+            "The strongest positive pattern: customers whose previous campaign outcome was a success "
+            "(poutcome=success) are strongly linked to subscribing again, especially when contacted by "
+            "cellular phone (lift up to 6.45) - about six times more common among subscribers than by "
+            "chance. This is the clearest actionable pattern found: past success is the best predictor "
+            "of future success."
+        )
+    else:
+        st.info(
+            "No rules pointing to y=yes passed the support/confidence/lift thresholds used here - "
+            "on its own, that is a finding worth reporting, since it would mean no single categorical "
+            "combination alone predicts subscription strongly."
+        )
 
 # ----------------------------------------------------------------------
 # TAB 4 - PREDICTIVE MODELING & EVALUATION
