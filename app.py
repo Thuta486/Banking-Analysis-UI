@@ -12,7 +12,7 @@ from sklearn.metrics import (
 st.set_page_config(page_title="Bank Term Deposit Subscription", layout="wide")
 
 # ----------------------------------------------------------------------
-# Load trained artifacts (produced by the notebook - see README)
+# Load trained artifacts (produced by the notebook)
 # ----------------------------------------------------------------------
 @st.cache_resource
 def load_artifacts():
@@ -219,10 +219,12 @@ with tabs[2]:
     st.caption(f"Showing the top {top_n_rules} of {len(rules_to_no):,} rules found, ranked by lift.")
     st.dataframe(_format_rules(rules_to_no, top_n_rules), use_container_width=True)
     st.caption(
-        "The strongest patterns all point to the same group: technicians with a professional-course "
-        "education, no personal loan, and no prior campaign contact are consistently linked to not "
-        "subscribing (lift around 4.05-4.08) - about four times more common among non-subscribers than "
-        "by chance. A useful negative pattern for deprioritizing unlikely-to-convert profiles."
+        "The single strongest rule by lift is an unusual one: customers who left both housing and loan "
+        "status as \"unknown\" are almost always linked to not subscribing (lift ~41.6) - but that's a "
+        "small, unusual subgroup rather than a meaningful behavioral pattern. The more genuinely useful "
+        "pattern shows up just below it: technicians with a professional-course education, no personal "
+        "loan, and no prior campaign contact are consistently linked to not subscribing (lift ~4.4-4.6) "
+        "- a useful negative pattern for deprioritizing unlikely-to-convert profiles."
     )
 
     if rules_to_yes is not None and len(rules_to_yes) > 0:
